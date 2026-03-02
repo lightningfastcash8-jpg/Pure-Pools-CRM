@@ -1,0 +1,48 @@
+PRIVACY POLICY
+
+Last updated: February 2024
+
+1. Information We Collect
+
+We collect information that you provide directly to us, including your name, email address, and any other information you choose to provide when using our Pure Pools CRM service.
+
+2. How We Use Your Information
+
+We use the information we collect to:
+- Provide, maintain, and improve our services
+- Process your requests and transactions
+- Send you technical notices and support messages
+- Communicate with you about products, services, and events
+
+3. Information Sharing
+
+We do not sell, trade, or otherwise transfer your personal information to third parties without your consent, except as described in this privacy policy or as required by law.
+
+4. Data Security
+
+We implement appropriate technical and organizational measures to protect your personal information against unauthorized access, alteration, disclosure, or destruction.
+
+5. Google OAuth
+
+When you authenticate using Google OAuth, we only access the information necessary to authenticate your identity and provide our services. We do not access your Google account beyond the permissions you explicitly grant.
+
+6. Your Rights
+
+You have the right to:
+- Access your personal information
+- Correct inaccurate information
+- Request deletion of your information
+- Opt-out of certain data collection
+
+7. Cookies
+
+We use cookies and similar tracking technologies to track activity on our service and hold certain information to improve and analyze our service.
+
+8. Changes to This Policy
+
+We may update this privacy policy from time to time. We will notify you of any changes by posting the new privacy policy on this page and updating the "Last updated" date.
+
+9. Contact Us
+
+If you have any questions about this privacy policy, please contact us at:
+jimmy@purepoolsinc.com

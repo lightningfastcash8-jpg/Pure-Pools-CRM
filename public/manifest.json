@@ -1,0 +1,56 @@
+{
+  "name": "Pure Pools CRM",
+  "short_name": "Pure Pools",
+  "description": "Operations and warranty management system",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0EA5E9",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "categories": ["business", "productivity"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/1.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/1.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/1.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Work Orders",
+      "short_name": "Orders",
+      "description": "View and manage work orders",
+      "url": "/work-orders",
+      "icons": [{ "src": "/1.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Customers",
+      "short_name": "Customers",
+      "description": "View customer list",
+      "url": "/customers",
+      "icons": [{ "src": "/1.png", "sizes": "96x96" }]
+    },
+    {
+      "name": "Schedule",
+      "short_name": "Schedule",
+      "description": "View appointment schedule",
+      "url": "/scheduler",
+      "icons": [{ "src": "/1.png", "sizes": "96x96" }]
+    }
+  ]
+}
