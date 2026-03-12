@@ -1,9 +1,63 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
+async function getValidAccessToken(supabase: any, userId: string): Promise<string | null> {
+  const { data: tokenData } = await supabase
+    .from('oauth_tokens')
+    .select('*')
+    .eq('provider', 'google')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (!tokenData) return null
+
+  const expiresAt = new Date(tokenData.expires_at)
+  const now = new Date()
+
+  if (expiresAt > now) {
+    return tokenData.access_token
+  }
+
+  if (!tokenData.refresh_token) return null
+
+  const clientId = process.env.GOOGLE_CLIENT_ID
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+
+  if (!clientId || !clientSecret) return null
+
+  const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: tokenData.refresh_token,
+      grant_type: 'refresh_token',
+    }),
+  })
+
+  if (!refreshResponse.ok) return null
+
+  const newTokens = await refreshResponse.json()
+
+  const newExpiresAt = new Date()
+  newExpiresAt.setSeconds(newExpiresAt.getSeconds() + newTokens.expires_in)
+
+  await supabase
+    .from('oauth_tokens')
+    .update({
+      access_token: newTokens.access_token,
+      expires_at: newExpiresAt.toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', tokenData.id)
+
+  return newTokens.access_token
+}
+
 export async function POST(request: Request) {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
@@ -13,15 +67,14 @@ export async function POST(request: Request) {
       )
     }
 
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session?.provider_token) {
+    const accessToken = await getValidAccessToken(supabase, user.id)
+
+    if (!accessToken) {
       return NextResponse.json({
-        message: 'Please sign in with Google to enable Gmail sync.',
+        message: 'Please connect your Google account in Settings to enable Gmail sync.',
         newEmails: 0
       })
     }
-
-    const accessToken = session.provider_token
 
     const labelResponse = await fetch(
       'https://gmail.googleapis.com/gmail/v1/users/me/labels',

@@ -71,9 +71,10 @@ export default function SettingsPage() {
   };
 
   const connectGoogle = async () => {
+    if (!user) return;
     setLoading(true);
     try {
-      window.location.href = `/api/auth/google?returnTo=${encodeURIComponent('/settings')}`;
+      window.location.href = `/api/auth/google?userId=${encodeURIComponent(user.id)}&returnTo=${encodeURIComponent('/settings')}`;
     } catch (error: any) {
       console.error("Failed to connect Google:", error);
       setLoading(false);
