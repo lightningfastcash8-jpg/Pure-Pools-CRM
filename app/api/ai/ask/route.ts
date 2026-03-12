@@ -233,7 +233,13 @@ export async function POST(request: Request) {
           parameters: {
             type: 'object',
             properties: {
-              data: { type: 'array', description: 'Array of objects to convert to CSV' }
+              data: {
+                type: 'array',
+                items: {
+                  type: 'object'
+                },
+                description: 'Array of objects to convert to CSV'
+              }
             },
             required: ['data']
           }
