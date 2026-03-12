@@ -14,17 +14,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Mail,
-  Calendar,
-  Settings as SettingsIcon,
-  AlertCircle,
-  CheckCircle,
-  Upload,
-  Database,
-  FileText,
-  Play,
-} from "lucide-react";
+import { Mail, Calendar, Settings as SettingsIcon, CircleAlert as AlertCircle, CircleCheck as CheckCircle, Upload, Database, FileText, Play } from "lucide-react";
 import { useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -55,11 +45,16 @@ export default function SettingsPage() {
     if (!user) return;
 
     const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
 
-    if (session?.provider_token) {
+    const { data: tokens } = await supabase
+      .from('oauth_tokens')
+      .select('*')
+      .eq('provider', 'google')
+      .maybeSingle();
+
+    if (tokens) {
       setGmailConnected(true);
-      setUserEmail(session.user.email || "");
+      setUserEmail(tokens.email || user.email || "");
     }
   };
 
@@ -78,24 +73,9 @@ export default function SettingsPage() {
   const connectGoogle = async () => {
     setLoading(true);
     try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: `${window.location.origin}/settings`,
-          scopes:
-            "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly",
-          queryParams: {
-            access_type: "offline",
-            prompt: "consent",
-          },
-        },
-      });
-
-      if (error) throw error;
+      window.location.href = `/api/auth/google?returnTo=${encodeURIComponent('/settings')}`;
     } catch (error: any) {
       console.error("Failed to connect Google:", error);
-    } finally {
       setLoading(false);
     }
   };
@@ -104,20 +84,26 @@ export default function SettingsPage() {
     try {
       const supabase = createClient();
 
-      // Store the OAuth token to revoke
-      const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.provider_token;
+      const { data: tokens } = await supabase
+        .from('oauth_tokens')
+        .select('access_token')
+        .eq('provider', 'google')
+        .maybeSingle();
 
-      if (token) {
-        // Revoke Google token
-        await fetch(`https://oauth2.googleapis.com/revoke?token=${token}`, {
+      if (tokens?.access_token) {
+        await fetch(`https://oauth2.googleapis.com/revoke?token=${tokens.access_token}`, {
           method: 'POST',
         });
       }
 
-      // Sign out and redirect
-      await supabase.auth.signOut();
-      window.location.href = "/login";
+      await supabase
+        .from('oauth_tokens')
+        .delete()
+        .eq('provider', 'google');
+
+      setGmailConnected(false);
+      setUserEmail("");
+      toast.success("Google account disconnected");
     } catch (error) {
       console.error("Error disconnecting Google:", error);
       toast.error("Failed to disconnect Google account");
@@ -127,12 +113,6 @@ export default function SettingsPage() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    if (file.size > 10 * 1024 * 1024) {
-      toast.error("File size must be less than 10MB");
-      return;
-    }
-
     setSelectedFile(file);
     if (!documentTitle) {
       setDocumentTitle(file.name.replace(/\.[^/.]+$/, ""));
@@ -146,7 +126,6 @@ export default function SettingsPage() {
     }
 
     setUploadLoading(true);
-    let contentToUpload = "";
     const supabase = createClient();
 
     try {
@@ -156,14 +135,32 @@ export default function SettingsPage() {
           setUploadLoading(false);
           return;
         }
-        contentToUpload = documentContent;
+        const { error } = await supabase.from("ai_knowledge_documents").insert({
+          doc_type: documentType,
+          title: documentTitle,
+          content: documentContent,
+        });
+        if (error) throw error;
+        toast.success("Document uploaded to knowledge base");
+        setDocumentTitle("");
+        setDocumentContent("");
+        await loadKnowledgeDocs();
       } else if (inputMethod === "url") {
         if (!documentUrl) {
           toast.error("Please provide a URL");
           setUploadLoading(false);
           return;
         }
-        contentToUpload = `URL Reference: ${documentUrl}`;
+        const { error } = await supabase.from("ai_knowledge_documents").insert({
+          doc_type: documentType,
+          title: documentTitle,
+          content: `URL Reference: ${documentUrl}`,
+        });
+        if (error) throw error;
+        toast.success("Document uploaded to knowledge base");
+        setDocumentTitle("");
+        setDocumentUrl("");
+        await loadKnowledgeDocs();
       } else if (inputMethod === "file") {
         if (!selectedFile) {
           toast.error("Please select a file");
@@ -171,45 +168,52 @@ export default function SettingsPage() {
           return;
         }
 
-        const fileExt = selectedFile.name.split(".").pop();
-        const fileName = `${Date.now()}_${documentTitle}.${fileExt}`;
-        const filePath = `knowledge/${fileName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from("knowledge-base")
-          .upload(filePath, selectedFile);
-
-        if (uploadError) {
-          toast.error("Failed to upload file");
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          toast.error("Not authenticated");
           setUploadLoading(false);
           return;
         }
 
-        const {
-          data: { publicUrl },
-        } = supabase.storage.from("knowledge-base").getPublicUrl(filePath);
+        const formData = new FormData();
+        formData.append("file", selectedFile);
+        formData.append("title", documentTitle);
+        formData.append("doc_type", documentType);
 
-        contentToUpload = `File Reference: ${publicUrl}\nFilename: ${selectedFile.name}`;
-      }
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const response = await fetch(
+          `${supabaseUrl}/functions/v1/extract-document-text`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+            },
+            body: formData,
+          }
+        );
 
-      const { error } = await supabase.from("ai_knowledge_documents").insert({
-        doc_type: documentType,
-        title: documentTitle,
-        content: contentToUpload,
-      });
+        const result = await response.json();
 
-      if (error) {
-        toast.error("Failed to upload document");
-      } else {
-        toast.success("Document uploaded to knowledge base");
+        if (!response.ok) {
+          throw new Error(result.error || "Failed to process file");
+        }
+
+        if (result.chunks > 1) {
+          toast.success(
+            `Document extracted and split into ${result.chunks} parts (${(result.characters / 1000).toFixed(0)}k characters)`
+          );
+        } else {
+          toast.success("Document extracted and added to knowledge base");
+        }
+
         setDocumentTitle("");
-        setDocumentContent("");
-        setDocumentUrl("");
         setSelectedFile(null);
+        const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+        if (fileInput) fileInput.value = "";
         await loadKnowledgeDocs();
       }
-    } catch (error) {
-      toast.error("An error occurred during upload");
+    } catch (error: any) {
+      toast.error(error.message || "An error occurred during upload");
       console.error(error);
     } finally {
       setUploadLoading(false);
@@ -479,20 +483,20 @@ export default function SettingsPage() {
 
                 {inputMethod === "file" && (
                   <div>
-                    <Label>Upload File (PDF, TXT, or Image)</Label>
+                    <Label>Upload File (PDF or TXT)</Label>
                     <Input
                       type="file"
                       onChange={handleFileChange}
-                      accept=".pdf,.txt,.doc,.docx,.png,.jpg,.jpeg"
+                      accept=".pdf,.txt"
                       className="mt-1"
                     />
                     {selectedFile && (
                       <p className="text-xs text-green-600 mt-1">
-                        Selected: {selectedFile.name}
+                        Selected: {selectedFile.name} ({(selectedFile.size / (1024 * 1024)).toFixed(1)} MB)
                       </p>
                     )}
                     <p className="text-xs text-muted-foreground mt-1">
-                      Max file size: 10MB
+                      Large PDFs are supported. Text is automatically extracted and chunked for the AI.
                     </p>
                   </div>
                 )}
