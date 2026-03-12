@@ -8,7 +8,6 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import Image from 'next/image'
 import { toast } from 'sonner'
-import { createClient } from '@/lib/supabase/client'
 import { Mail } from 'lucide-react'
 import Link from 'next/link'
 
@@ -38,23 +37,7 @@ export default function LoginPage() {
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true)
     try {
-      const supabase = createClient()
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}/dashboard`,
-          scopes: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.readonly',
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'consent',
-          },
-        },
-      })
-
-      if (error) {
-        toast.error(error.message)
-        setGoogleLoading(false)
-      }
+      window.location.href = '/api/auth/google?returnTo=/dashboard'
     } catch (error: any) {
       toast.error(error.message || 'Failed to sign in with Google')
       setGoogleLoading(false)
