@@ -1,6 +1,21 @@
 import { NextResponse } from 'next/server'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
-import { createClient } from '@/lib/supabase/server'
+
+function getServiceClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!url || !serviceKey) {
+    throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY environment variable')
+  }
+
+  return createSupabaseClient(url, serviceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  })
+}
 
 async function verifyUserFromToken(authHeader: string | null): Promise<{ userId: string } | null> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -29,76 +44,90 @@ interface TokenRefreshError {
 }
 
 async function getValidAccessToken(supabase: any, userId: string): Promise<{ token: string | null; error?: string }> {
-  const { data: tokenData, error: dbError } = await supabase
-    .from('oauth_tokens')
-    .select('*')
-    .eq('provider', 'google')
-    .eq('user_id', userId)
-    .maybeSingle()
+  try {
+    const { data: tokenData, error: dbError } = await supabase
+      .from('oauth_tokens')
+      .select('*')
+      .eq('provider', 'google')
+      .eq('user_id', userId)
+      .maybeSingle()
 
-  if (dbError) {
-    console.error('Database error fetching token:', dbError)
-    return { token: null, error: 'Database error' }
-  }
-
-  if (!tokenData) {
-    return { token: null, error: 'No Google account connected' }
-  }
-
-  const expiresAt = new Date(tokenData.expires_at)
-  const now = new Date()
-
-  if (expiresAt > now) {
-    return { token: tokenData.access_token }
-  }
-
-  if (!tokenData.refresh_token) {
-    return { token: null, error: 'No refresh token - please reconnect your Google account' }
-  }
-
-  const clientId = process.env.GOOGLE_CLIENT_ID
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET
-
-  if (!clientId || !clientSecret) {
-    return { token: null, error: 'Server configuration error - missing Google credentials' }
-  }
-
-  const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
-      refresh_token: tokenData.refresh_token,
-      grant_type: 'refresh_token',
-    }),
-  })
-
-  if (!refreshResponse.ok) {
-    const errorData: TokenRefreshError = await refreshResponse.json().catch(() => ({ error: 'Unknown error' }))
-    console.error('Token refresh failed:', errorData)
-
-    if (errorData.error === 'invalid_grant') {
-      return { token: null, error: 'Google authorization expired - please reconnect your account' }
+    if (dbError) {
+      console.error('Database error fetching token:', dbError)
+      return { token: null, error: `Database error: ${dbError.message}` }
     }
-    return { token: null, error: `Token refresh failed: ${errorData.error_description || errorData.error}` }
-  }
 
-  const newTokens = await refreshResponse.json()
+    if (!tokenData) {
+      return { token: null, error: 'No Google account connected. Please connect your Google account in Settings.' }
+    }
 
-  const newExpiresAt = new Date()
-  newExpiresAt.setSeconds(newExpiresAt.getSeconds() + newTokens.expires_in)
+    const expiresAt = new Date(tokenData.expires_at)
+    const now = new Date()
+    const bufferTime = 5 * 60 * 1000
 
-  await supabase
-    .from('oauth_tokens')
-    .update({
-      access_token: newTokens.access_token,
-      expires_at: newExpiresAt.toISOString(),
-      updated_at: new Date().toISOString(),
+    if (expiresAt.getTime() > now.getTime() + bufferTime) {
+      return { token: tokenData.access_token }
+    }
+
+    if (!tokenData.refresh_token) {
+      return { token: null, error: 'No refresh token available. Please disconnect and reconnect your Google account in Settings.' }
+    }
+
+    const clientId = process.env.GOOGLE_CLIENT_ID
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+
+    if (!clientId || !clientSecret) {
+      console.error('Missing Google OAuth credentials in environment')
+      return { token: null, error: 'Server configuration error - Google OAuth credentials not configured' }
+    }
+
+    console.log('Refreshing expired Google token...')
+
+    const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: tokenData.refresh_token,
+        grant_type: 'refresh_token',
+      }),
     })
-    .eq('id', tokenData.id)
 
-  return { token: newTokens.access_token }
+    if (!refreshResponse.ok) {
+      const errorData: TokenRefreshError = await refreshResponse.json().catch(() => ({ error: 'Unknown error' }))
+      console.error('Token refresh failed:', errorData)
+
+      if (errorData.error === 'invalid_grant') {
+        return { token: null, error: 'Google authorization has expired. Please reconnect your Google account in Settings.' }
+      }
+      return { token: null, error: `Token refresh failed: ${errorData.error_description || errorData.error}` }
+    }
+
+    const newTokens = await refreshResponse.json()
+
+    const newExpiresAt = new Date()
+    newExpiresAt.setSeconds(newExpiresAt.getSeconds() + newTokens.expires_in)
+
+    const { error: updateError } = await supabase
+      .from('oauth_tokens')
+      .update({
+        access_token: newTokens.access_token,
+        expires_at: newExpiresAt.toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', tokenData.id)
+
+    if (updateError) {
+      console.error('Failed to save refreshed token:', updateError)
+    }
+
+    console.log('Token refreshed successfully')
+    return { token: newTokens.access_token }
+  } catch (err: any) {
+    console.error('Unexpected error in getValidAccessToken:', err)
+    return { token: null, error: `Unexpected error: ${err.message}` }
+  }
 }
 
 function parseFromHeader(from: string): { name: string; email: string } {
@@ -116,13 +145,23 @@ export async function POST(request: Request) {
 
     if (!authResult) {
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { error: 'Unauthorized - please log in again' },
         { status: 401 }
       )
     }
 
     const userId = authResult.userId
-    const supabase = createClient()
+
+    let supabase
+    try {
+      supabase = getServiceClient()
+    } catch (err: any) {
+      console.error('Service client error:', err)
+      return NextResponse.json({
+        error: 'Server configuration error - missing database credentials',
+        newEmails: 0
+      }, { status: 500 })
+    }
 
     const body = await request.json().catch(() => ({}))
     const years = body.years || 1
