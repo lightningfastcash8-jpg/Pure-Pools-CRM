@@ -1,5 +1,27 @@
 import { NextResponse } from 'next/server'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/server'
+
+async function verifyUserFromToken(authHeader: string | null): Promise<{ userId: string } | null> {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null
+  }
+
+  const token = authHeader.replace('Bearer ', '')
+
+  const supabase = createSupabaseClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
+
+  const { data: { user }, error } = await supabase.auth.getUser(token)
+
+  if (error || !user) {
+    return null
+  }
+
+  return { userId: user.id }
+}
 
 async function getValidAccessToken(supabase: any, userId: string): Promise<string | null> {
   const { data: tokenData } = await supabase
@@ -65,20 +87,23 @@ function parseFromHeader(from: string): { name: string; email: string } {
 
 export async function POST(request: Request) {
   try {
-    const supabase = await createClient()
+    const authHeader = request.headers.get('Authorization')
+    const authResult = await verifyUserFromToken(authHeader)
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
+    if (!authResult) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }
       )
     }
 
+    const userId = authResult.userId
+    const supabase = createClient()
+
     const body = await request.json().catch(() => ({}))
     const years = body.years || 1
 
-    const accessToken = await getValidAccessToken(supabase, user.id)
+    const accessToken = await getValidAccessToken(supabase, userId)
 
     if (!accessToken) {
       return NextResponse.json({
@@ -195,7 +220,7 @@ export async function POST(request: Request) {
     await supabase
       .from('oauth_tokens')
       .update({ last_synced_at: new Date().toISOString() })
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .eq('provider', 'google')
 
     return NextResponse.json({

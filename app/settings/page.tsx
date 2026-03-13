@@ -272,9 +272,21 @@ export default function SettingsPage() {
   const startHistoricalImport = async () => {
     setImportLoading(true);
     try {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        toast.error("Please log in again to import emails");
+        setImportLoading(false);
+        return;
+      }
+
       const response = await fetch('/api/gmail/sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
         body: JSON.stringify({ years: importYearsBack }),
       });
 
