@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { cookies } from 'next/headers'
+import { createServerClient } from '@supabase/auth-helpers-nextjs'
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest) {
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET
     const redirectUri = `${request.nextUrl.origin}/api/auth/callback/google`
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
     if (!clientId || !clientSecret) {
       return NextResponse.redirect(
@@ -30,8 +31,8 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    if (!supabaseUrl || !supabaseServiceKey) {
-      console.error('Missing Supabase credentials: URL or Service Role Key not configured')
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.error('Missing Supabase credentials')
       return NextResponse.redirect(
         new URL('/settings?error=server_config_error', request.url)
       )
@@ -69,19 +70,33 @@ export async function GET(request: NextRequest) {
 
     const userInfo = await userInfoResponse.json()
 
-    const supabase = createSupabaseClient(supabaseUrl, supabaseServiceKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    })
-
     const expiresAt = new Date()
     expiresAt.setSeconds(expiresAt.getSeconds() + tokens.expires_in)
 
-    const { error: dbError } = await supabase
-      .from('oauth_tokens')
-      .upsert({
+    const cookieStore = cookies()
+    const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value
+        },
+        set() {},
+        remove() {},
+      },
+    })
+
+    const { data: { session } } = await supabase.auth.getSession()
+
+    if (!session) {
+      return NextResponse.redirect(new URL('/settings?error=not_authenticated', request.url))
+    }
+
+    const saveResponse = await fetch(`${supabaseUrl}/functions/v1/save-oauth-token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
         user_id: userId,
         provider: 'google',
         access_token: tokens.access_token,
@@ -89,16 +104,14 @@ export async function GET(request: NextRequest) {
         expires_at: expiresAt.toISOString(),
         scope: tokens.scope,
         email: userInfo.email,
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: 'user_id,provider'
-      })
+      }),
+    })
 
-    if (dbError) {
-      console.error('Database error saving OAuth tokens:', JSON.stringify(dbError, null, 2))
-      const details = dbError.message || dbError.code || 'Unknown error'
+    if (!saveResponse.ok) {
+      const errorData = await saveResponse.json()
+      console.error('Failed to save OAuth token:', errorData)
       return NextResponse.redirect(
-        new URL(`/settings?error=database_error&details=${encodeURIComponent(details)}`, request.url)
+        new URL(`/settings?error=database_error&details=${encodeURIComponent(errorData.error || 'Unknown error')}`, request.url)
       )
     }
 
