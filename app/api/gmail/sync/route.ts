@@ -55,6 +55,14 @@ async function getValidAccessToken(supabase: any, userId: string): Promise<strin
   return newTokens.access_token
 }
 
+function parseFromHeader(from: string): { name: string; email: string } {
+  const match = from.match(/^(.+?)\s*<([^>]+)>$/)
+  if (match) {
+    return { name: match[1].trim().replace(/^["']|["']$/g, ''), email: match[2] }
+  }
+  return { name: '', email: from }
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient()
@@ -67,6 +75,9 @@ export async function POST(request: Request) {
       )
     }
 
+    const body = await request.json().catch(() => ({}))
+    const years = body.years || 1
+
     const accessToken = await getValidAccessToken(supabase, user.id)
 
     if (!accessToken) {
@@ -76,54 +87,52 @@ export async function POST(request: Request) {
       })
     }
 
-    const labelResponse = await fetch(
-      'https://gmail.googleapis.com/gmail/v1/users/me/labels',
-      {
-        headers: { Authorization: `Bearer ${accessToken}` }
+    const afterDate = new Date()
+    afterDate.setFullYear(afterDate.getFullYear() - years)
+    const afterTimestamp = Math.floor(afterDate.getTime() / 1000)
+
+    let allMessages: any[] = []
+    let nextPageToken: string | null = null
+
+    do {
+      const url = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages')
+      url.searchParams.set('maxResults', '100')
+      url.searchParams.set('q', `after:${afterTimestamp}`)
+      if (nextPageToken) {
+        url.searchParams.set('pageToken', nextPageToken)
       }
-    )
 
-    if (!labelResponse.ok) {
-      throw new Error('Failed to fetch Gmail labels')
-    }
-
-    const labelsData = await labelResponse.json()
-    const targetLabel = labelsData.labels?.find(
-      (l: any) => l.name === 'PP_Warranty_CRM_Upload'
-    )
-
-    if (!targetLabel) {
-      return NextResponse.json({
-        message: 'Label "PP_Warranty_CRM_Upload" not found. Please create it in Gmail.',
-        newEmails: 0
+      const messagesResponse = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${accessToken}` }
       })
-    }
 
-    const messagesResponse = await fetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=${targetLabel.id}&maxResults=50`,
-      {
-        headers: { Authorization: `Bearer ${accessToken}` }
+      if (!messagesResponse.ok) {
+        const errorText = await messagesResponse.text()
+        throw new Error(`Failed to fetch messages: ${errorText}`)
       }
-    )
 
-    if (!messagesResponse.ok) {
-      throw new Error('Failed to fetch messages')
-    }
+      const messagesData = await messagesResponse.json()
+      const messages = messagesData.messages || []
+      allMessages = allMessages.concat(messages)
+      nextPageToken = messagesData.nextPageToken || null
 
-    const messagesData = await messagesResponse.json()
-    const messages = messagesData.messages || []
+      if (allMessages.length >= 500) break
+    } while (nextPageToken)
 
     let processedCount = 0
-    let warrantyCount = 0
+    let skippedCount = 0
 
-    for (const message of messages) {
+    for (const message of allMessages) {
       const { data: existing } = await supabase
         .from('emails_raw')
         .select('id')
-        .eq('gmail_message_id', message.id)
+        .eq('provider_message_id', message.id)
         .maybeSingle()
 
-      if (existing) continue
+      if (existing) {
+        skippedCount++
+        continue
+      }
 
       const detailResponse = await fetch(
         `https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}`,
@@ -142,61 +151,58 @@ export async function POST(request: Request) {
 
       const subject = getHeader('subject')
       const from = getHeader('from')
-      const to = getHeader('to')
       const date = getHeader('date')
+      const { name: fromName, email: fromEmail } = parseFromHeader(from)
 
       let body = ''
       if (detail.payload?.parts) {
         const textPart = detail.payload.parts.find((p: any) => p.mimeType === 'text/plain')
         if (textPart?.body?.data) {
           body = Buffer.from(textPart.body.data, 'base64').toString('utf-8')
+        } else {
+          const htmlPart = detail.payload.parts.find((p: any) => p.mimeType === 'text/html')
+          if (htmlPart?.body?.data) {
+            body = Buffer.from(htmlPart.body.data, 'base64').toString('utf-8')
+          }
         }
       } else if (detail.payload?.body?.data) {
         body = Buffer.from(detail.payload.body.data, 'base64').toString('utf-8')
       }
 
-      const { data: emailRow } = await supabase
+      const labelNames = detail.labelIds || []
+
+      const { error: insertError } = await supabase
         .from('emails_raw')
         .insert({
-          gmail_message_id: message.id,
+          provider: 'gmail',
+          provider_message_id: message.id,
+          thread_id: detail.threadId,
+          label_name: labelNames.join(','),
+          from_name: fromName,
+          from_email: fromEmail,
           subject,
-          sender: from,
-          recipient: to,
           body_text: body,
-          received_at: new Date(date).toISOString(),
-          labels: ['PP_Warranty_CRM_Upload'],
-          raw_headers: headers
+          received_at: date ? new Date(date).toISOString() : new Date().toISOString(),
+          raw_json: detail,
+          processed_status: 'new'
         })
-        .select()
-        .single()
 
-      if (emailRow) {
+      if (!insertError) {
         processedCount++
-
-        const aiResponse = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL?.replace('https://', 'https://').split('.')[0]}.supabase.co/functions/v1/parse-warranty-email`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY}`
-          },
-          body: JSON.stringify({
-            emailId: emailRow.id,
-            subject,
-            body,
-            from
-          })
-        }).catch(() => null)
-
-        if (aiResponse?.ok) {
-          warrantyCount++
-        }
       }
     }
 
+    await supabase
+      .from('oauth_tokens')
+      .update({ last_synced_at: new Date().toISOString() })
+      .eq('user_id', user.id)
+      .eq('provider', 'google')
+
     return NextResponse.json({
-      message: `Processed ${processedCount} new emails. Created ${warrantyCount} warranty claims.`,
+      message: `Imported ${processedCount} new emails. Skipped ${skippedCount} already imported.`,
       newEmails: processedCount,
-      warrantyClaims: warrantyCount
+      skipped: skippedCount,
+      total: allMessages.length
     })
 
   } catch (error: any) {

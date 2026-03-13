@@ -272,22 +272,19 @@ export default function SettingsPage() {
   const startHistoricalImport = async () => {
     setImportLoading(true);
     try {
-      const startDate = new Date();
-      startDate.setFullYear(startDate.getFullYear() - importYearsBack);
-
-      const supabase = createClient();
-      const { error } = await supabase.from("historical_import_settings").insert({
-        start_date: startDate.toISOString().split("T")[0],
-        end_date: new Date().toISOString().split("T")[0],
-        label_filter: "Warranty Work",
-        status: "pending",
+      const response = await fetch('/api/gmail/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ years: importYearsBack }),
       });
 
-      if (error) throw error;
+      const result = await response.json();
 
-      toast.success(
-        `Historical import queued. Processing emails from the last ${importYearsBack} years.`
-      );
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to sync emails');
+      }
+
+      toast.success(result.message || `Imported ${result.newEmails} emails`);
     } catch (error: any) {
       toast.error("Failed to start import: " + error.message);
     } finally {
