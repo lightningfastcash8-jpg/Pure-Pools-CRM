@@ -92,10 +92,17 @@ export async function GET(request: NextRequest) {
     })
 
     if (!saveResponse.ok) {
-      const errorData = await saveResponse.json()
-      console.error('Failed to save OAuth token:', errorData)
+      let errorMessage = 'Unknown error'
+      try {
+        const errorText = await saveResponse.text()
+        console.error('Failed to save OAuth token - raw response:', errorText)
+        const errorData = JSON.parse(errorText)
+        errorMessage = errorData.error || errorData.message || 'Unknown error'
+      } catch (parseErr) {
+        console.error('Failed to parse error response:', parseErr)
+      }
       return NextResponse.redirect(
-        new URL(`/settings?error=database_error&details=${encodeURIComponent(errorData.error || 'Unknown error')}`, request.url)
+        new URL(`/settings?error=database_error&details=${encodeURIComponent(errorMessage)}`, request.url)
       )
     }
 
