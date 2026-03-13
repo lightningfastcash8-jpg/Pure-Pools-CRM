@@ -16,12 +16,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Mail, Calendar, Settings as SettingsIcon, CircleAlert as AlertCircle, CircleCheck as CheckCircle, Upload, Database, FileText, Play } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
 export default function SettingsPage() {
   const { user } = useAuth();
+  const searchParams = useSearchParams();
   const [gmailConnected, setGmailConnected] = useState(false);
   const [userEmail, setUserEmail] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -35,6 +37,30 @@ export default function SettingsPage() {
   const [inputMethod, setInputMethod] = useState<"text" | "url" | "file">("text");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadLoading, setUploadLoading] = useState(false);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const error = searchParams.get("error");
+    const success = searchParams.get("success");
+    const details = searchParams.get("details");
+
+    if (error) {
+      const errorMessages: Record<string, string> = {
+        database_error: `Failed to save connection${details ? `: ${details}` : ""}`,
+        token_exchange_failed: "Failed to exchange authorization code",
+        oauth_not_configured: "Google OAuth is not configured on the server",
+        server_config_error: "Server configuration error - missing service role key",
+        missing_code: "Missing authorization code from Google",
+        unexpected_error: "An unexpected error occurred",
+      };
+      setOauthError(errorMessages[error] || error);
+      toast.error(errorMessages[error] || `Connection failed: ${error}`);
+    }
+
+    if (success === "true") {
+      toast.success("Google account connected successfully!");
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     checkConnections();
@@ -271,6 +297,14 @@ export default function SettingsPage() {
             Manage integrations, knowledge base, and system configuration
           </p>
         </div>
+
+        {oauthError && (
+          <Alert className="mb-6 bg-red-50 text-red-900 border-red-200">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Connection Failed</AlertTitle>
+            <AlertDescription>{oauthError}</AlertDescription>
+          </Alert>
+        )}
 
         {gmailConnected && (
           <Alert className="mb-6 bg-green-50 text-green-900 border-green-200">
@@ -528,7 +562,7 @@ export default function SettingsPage() {
                         <div className="flex-1">
                           <div className="font-medium text-sm">{doc.title}</div>
                           <div className="text-xs text-gray-500 mt-1">
-                            {doc.doc_type} •{" "}
+                            {doc.doc_type} -{" "}
                             {new Date(doc.created_at).toLocaleDateString()}
                           </div>
                         </div>

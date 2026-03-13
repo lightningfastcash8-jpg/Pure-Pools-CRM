@@ -20,7 +20,7 @@ export default function AgentPage() {
     {
       role: "assistant",
       content:
-        "Hi! I'm your AI assistant with direct access to your parts catalog and customer database. I can help you with:\n\n• Finding part numbers and equipment specs from uploaded manuals\n• Generating customer lists for marketing campaigns\n• Creating downloadable CSV reports\n• Answering warranty and service history questions\n• Searching work orders and equipment data\n• Building targeted export lists by tags or equipment type\n\nYou can type or use voice input by clicking the microphone button. Just ask me anything!",
+        "Hi! I'm your AI assistant with direct access to your parts catalog and customer database. I can help you with:\n\n- Finding part numbers and equipment specs from uploaded manuals\n- Generating customer lists for marketing campaigns\n- Creating downloadable CSV reports\n- Answering warranty and service history questions\n- Searching work orders and equipment data\n- Building targeted export lists by tags or equipment type\n\nYou can type or use voice input by clicking the microphone button. Just ask me anything!",
     },
   ]);
   const [input, setInput] = useState("");
@@ -227,7 +227,7 @@ export default function AgentPage() {
         ...prev,
         {
           role: "assistant",
-          content: `❌ Error: ${errorMessage}`,
+          content: `Error: ${errorMessage}`,
         },
       ]);
     } finally {
