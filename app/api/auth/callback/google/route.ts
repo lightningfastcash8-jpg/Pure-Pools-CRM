@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
@@ -21,10 +21,19 @@ export async function GET(request: NextRequest) {
     const clientId = process.env.GOOGLE_CLIENT_ID
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET
     const redirectUri = `${request.nextUrl.origin}/api/auth/callback/google`
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 
     if (!clientId || !clientSecret) {
       return NextResponse.redirect(
         new URL('/settings?error=oauth_not_configured', request.url)
+      )
+    }
+
+    if (!supabaseUrl || !supabaseServiceKey) {
+      console.error('Missing Supabase credentials: URL or Service Role Key not configured')
+      return NextResponse.redirect(
+        new URL('/settings?error=server_config_error', request.url)
       )
     }
 
@@ -60,7 +69,12 @@ export async function GET(request: NextRequest) {
 
     const userInfo = await userInfoResponse.json()
 
-    const supabase = createClient()
+    const supabase = createSupabaseClient(supabaseUrl, supabaseServiceKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    })
 
     const expiresAt = new Date()
     expiresAt.setSeconds(expiresAt.getSeconds() + tokens.expires_in)
@@ -77,13 +91,14 @@ export async function GET(request: NextRequest) {
         email: userInfo.email,
         updated_at: new Date().toISOString(),
       }, {
-        onConflict: 'user_id,provider',
+        onConflict: 'user_id,provider'
       })
 
     if (dbError) {
-      console.error('Database error:', dbError)
+      console.error('Database error saving OAuth tokens:', JSON.stringify(dbError, null, 2))
+      const details = dbError.message || dbError.code || 'Unknown error'
       return NextResponse.redirect(
-        new URL('/settings?error=database_error', request.url)
+        new URL(`/settings?error=database_error&details=${encodeURIComponent(details)}`, request.url)
       )
     }
 
