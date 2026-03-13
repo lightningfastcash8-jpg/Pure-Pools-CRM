@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { createServerClient } from '@supabase/auth-helpers-nextjs'
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams
@@ -17,13 +15,16 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const { userId, returnTo } = JSON.parse(Buffer.from(state, 'base64').toString())
+    const { userId, returnTo, accessToken } = JSON.parse(Buffer.from(state, 'base64').toString())
+
+    if (!accessToken) {
+      return NextResponse.redirect(new URL('/settings?error=not_authenticated', request.url))
+    }
 
     const clientId = process.env.GOOGLE_CLIENT_ID
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET
     const redirectUri = `${request.nextUrl.origin}/api/auth/callback/google`
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
     if (!clientId || !clientSecret) {
       return NextResponse.redirect(
@@ -31,8 +32,8 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    if (!supabaseUrl || !supabaseAnonKey) {
-      console.error('Missing Supabase credentials')
+    if (!supabaseUrl) {
+      console.error('Missing Supabase URL')
       return NextResponse.redirect(
         new URL('/settings?error=server_config_error', request.url)
       )
@@ -73,28 +74,11 @@ export async function GET(request: NextRequest) {
     const expiresAt = new Date()
     expiresAt.setSeconds(expiresAt.getSeconds() + tokens.expires_in)
 
-    const cookieStore = cookies()
-    const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
-      cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value
-        },
-        set() {},
-        remove() {},
-      },
-    })
-
-    const { data: { session } } = await supabase.auth.getSession()
-
-    if (!session) {
-      return NextResponse.redirect(new URL('/settings?error=not_authenticated', request.url))
-    }
-
     const saveResponse = await fetch(`${supabaseUrl}/functions/v1/save-oauth-token`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session.access_token}`,
+        'Authorization': `Bearer ${accessToken}`,
       },
       body: JSON.stringify({
         user_id: userId,

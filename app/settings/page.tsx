@@ -100,7 +100,14 @@ export default function SettingsPage() {
     if (!user) return;
     setLoading(true);
     try {
-      window.location.href = `/api/auth/google?userId=${encodeURIComponent(user.id)}&returnTo=${encodeURIComponent('/settings')}`;
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error("Please log in again to connect Google");
+        setLoading(false);
+        return;
+      }
+      window.location.href = `/api/auth/google?userId=${encodeURIComponent(user.id)}&returnTo=${encodeURIComponent('/settings')}&accessToken=${encodeURIComponent(session.access_token)}`;
     } catch (error: any) {
       console.error("Failed to connect Google:", error);
       setLoading(false);
@@ -562,7 +569,7 @@ export default function SettingsPage() {
                         <div className="flex-1">
                           <div className="font-medium text-sm">{doc.title}</div>
                           <div className="text-xs text-gray-500 mt-1">
-                            {doc.doc_type} -{" "}
+                            {doc.doc_type} •{" "}
                             {new Date(doc.created_at).toLocaleDateString()}
                           </div>
                         </div>

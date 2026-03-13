@@ -5,6 +5,7 @@ export async function GET(request: NextRequest) {
   const redirectUri = `${request.nextUrl.origin}/api/auth/callback/google`
   const userId = request.nextUrl.searchParams.get('userId')
   const returnTo = request.nextUrl.searchParams.get('returnTo') || '/settings'
+  const accessToken = request.nextUrl.searchParams.get('accessToken')
 
   if (!clientId) {
     return NextResponse.json(
@@ -13,7 +14,7 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  if (!userId) {
+  if (!userId || !accessToken) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
     'https://www.googleapis.com/auth/userinfo.profile',
   ].join(' ')
 
-  const state = Buffer.from(JSON.stringify({ userId, returnTo })).toString('base64')
+  const state = Buffer.from(JSON.stringify({ userId, returnTo, accessToken })).toString('base64')
 
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
   authUrl.searchParams.set('client_id', clientId)
