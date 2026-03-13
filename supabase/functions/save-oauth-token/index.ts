@@ -67,25 +67,47 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const { error: dbError } = await supabase
+    const { data: existingToken } = await supabase
       .from("oauth_tokens")
-      .upsert({
-        user_id: payload.user_id,
-        provider: payload.provider,
-        access_token: payload.access_token,
-        refresh_token: payload.refresh_token,
-        expires_at: payload.expires_at,
-        scope: payload.scope,
-        email: payload.email,
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: "user_id,provider",
-      });
+      .select("id")
+      .eq("user_id", payload.user_id)
+      .eq("provider", payload.provider)
+      .maybeSingle();
+
+    let dbError;
+    if (existingToken) {
+      const { error } = await supabase
+        .from("oauth_tokens")
+        .update({
+          access_token: payload.access_token,
+          refresh_token: payload.refresh_token,
+          expires_at: payload.expires_at,
+          scope: payload.scope,
+          email: payload.email,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existingToken.id);
+      dbError = error;
+    } else {
+      const { error } = await supabase
+        .from("oauth_tokens")
+        .insert({
+          user_id: payload.user_id,
+          provider: payload.provider,
+          access_token: payload.access_token,
+          refresh_token: payload.refresh_token,
+          expires_at: payload.expires_at,
+          scope: payload.scope,
+          email: payload.email,
+          updated_at: new Date().toISOString(),
+        });
+      dbError = error;
+    }
 
     if (dbError) {
-      console.error("Database error:", dbError);
+      console.error("Database error:", JSON.stringify(dbError));
       return new Response(
-        JSON.stringify({ error: "Failed to save token", details: dbError.message }),
+        JSON.stringify({ error: dbError.message || "Database operation failed", code: dbError.code }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
